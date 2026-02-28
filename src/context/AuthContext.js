@@ -23,15 +23,55 @@ export const AuthProvider = ({ children }) => {
             }
 
             const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-                if (currentUser && !token) {
+                const currentToken = localStorage.getItem('token');
+
+                if (currentUser) {
+                    console.log('[AuthContext] Firebase User detected:', currentUser.email);
                     setUser(currentUser);
+
+                    // Always persist Firebase user profile so admin/checkout can read it
+                    const profile = {
+                        uid: currentUser.uid,
+                        name: currentUser.displayName || 'User',
+                        email: currentUser.email || '',
+                        photoURL: currentUser.photoURL || '',
+                    };
+                    localStorage.setItem('freshly_user_profile', JSON.stringify(profile));
+
+                    // Patch any existing orders that are missing userName/userEmail
+                    try {
+                        const existing = JSON.parse(localStorage.getItem('freshly_orders') || '[]');
+                        const patched = existing.map(o => {
+                            if (!o) return o;
+                            const sameUser = o.userId === currentUser.uid || !o.userName || o.userName === 'Guest' || o.userName === 'Customer';
+                            if (sameUser && (!o.userName || o.userName === 'Guest' || o.userName === 'Customer')) {
+                                return { ...o, userName: profile.name, userEmail: profile.email, userId: currentUser.uid };
+                            }
+                            return o;
+                        });
+                        localStorage.setItem('freshly_orders', JSON.stringify(patched));
+                    } catch (_) { }
+
+                    // SESSION RECOVERY: If firebase user exists but token is lost, restore it
+                    if (!currentToken) {
+                        try {
+                            const idToken = await currentUser.getIdToken();
+                            const recoveryToken = idToken || `firebase-token-${currentUser.uid}`;
+                            localStorage.setItem('token', recoveryToken);
+                            console.log('[AuthContext] Session Recovered: Token restored from Firebase');
+                        } catch (err) {
+                            console.error('[AuthContext] Session Recovery Failed:', err);
+                        }
+                    }
+
                     if (currentUser.email === 'admin@freshly.com') {
                         setRole('admin');
                     } else {
                         const savedRole = localStorage.getItem(`role_${currentUser.uid}`) || 'customer';
                         setRole(savedRole);
                     }
-                } else if (!token) {
+                } else if (!currentToken) {
+                    console.log('[AuthContext] No active session found');
                     setUser(null);
                     setRole(null);
                 }

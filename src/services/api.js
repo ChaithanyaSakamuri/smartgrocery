@@ -6,15 +6,19 @@ const getToken = () => localStorage.getItem('token');
 
 // Helper function for API calls
 const apiCall = async (endpoint, options = {}) => {
+  const token = localStorage.getItem('token');
   const headers = {
     'Content-Type': 'application/json',
     ...options.headers,
   };
 
-  // Add token if available and not a register/login request
-  if (getToken() && !endpoint.includes('/login') && !endpoint.includes('/register')) {
-    headers['Authorization'] = `Bearer ${getToken()}`;
+  // Only add Bearer token if it's NOT a login/register request
+  if (token && !endpoint.includes('/login') && !endpoint.includes('/register')) {
+    headers['Authorization'] = `Bearer ${token.trim()}`;
   }
+
+  // Debug log to confirm what is being sent
+  console.log(`[API CALL] ${endpoint}`, { hasToken: !!headers['Authorization'] });
 
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -22,14 +26,17 @@ const apiCall = async (endpoint, options = {}) => {
       headers,
     });
 
+    if (response.status === 204) return null;
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error || 'API Error');
+      console.error(`[API ERROR] ${endpoint}:`, response.status, data);
+      throw new Error(data.error || `API Error: ${response.status}`);
     }
 
     return data;
   } catch (error) {
+    console.error(`[API EXCEPTION] ${endpoint}:`, error);
     throw error;
   }
 };
@@ -130,3 +137,31 @@ export const cancelOrder = (id) =>
   apiCall(`/orders/${id}/cancel`, {
     method: 'PUT',
   });
+
+// **Admin APIs**
+export const getAdminSalesOverview = () =>
+  apiCall('/admin/sales-overview', { method: 'GET' });
+
+export const getAdminOrders = () =>
+  apiCall('/admin/orders', { method: 'GET' });
+
+export const updateAdminOrderStatus = (id, status) =>
+  apiCall(`/admin/orders/${id}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  });
+
+export const getAdminUsers = () =>
+  apiCall('/admin/users', { method: 'GET' });
+
+export const approveVendor = (id) =>
+  apiCall(`/admin/users/${id}/approve`, { method: 'PATCH' });
+
+export const updateUserRole = (id, role) =>
+  apiCall(`/admin/users/${id}/role`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+
+export const deleteUser = (id) =>
+  apiCall(`/admin/users/${id}`, { method: 'DELETE' });

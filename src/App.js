@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import './App.css';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -21,9 +21,17 @@ import Checkout from './pages/Checkout';
 const AppContent = () => {
   const { user, role, loading } = useAuth();
   const [cart, setCart] = useState([]);
-  const [wishlist, setWishlist] = useState([]);
+  const [wishlist, setWishlist] = useState(() => {
+    const saved = localStorage.getItem('freshly_wishlist');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [showWishlist, setShowWishlist] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Persist Wishlist
+  useEffect(() => {
+    localStorage.setItem('freshly_wishlist', JSON.stringify(wishlist));
+  }, [wishlist]);
 
   const addToCart = (product) => {
     setCart(prev => {

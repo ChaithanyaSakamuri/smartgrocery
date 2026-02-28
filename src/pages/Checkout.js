@@ -15,6 +15,7 @@ import {
     Smartphone
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { createOrder } from '../services/api';
 
 /* ── Freshly-branded UPI QR SVG ─────────────────────────────── */
 const FreshlyQR = () => (
@@ -346,29 +347,64 @@ const Checkout = ({ cart, setCart }) => {
     const [error, setError] = useState('');
     const [paymentMethod, setPaymentMethod] = useState('upi');
     const [showQr, setShowQr] = useState(false);
+    const [placedOrder, setPlacedOrder] = useState(null); // triggers success popup
 
-    /* ── Persist order to localStorage ── */
-    const saveOrderLocally = (method) => {
-        const existing = JSON.parse(localStorage.getItem('freshly_orders') || '[]');
-        const newOrder = {
+    /* ── Save order locally + try backend silently ── */
+    const saveOrderToBackend = async (method) => {
+        setProcessing(true);
+        setError('');
+
+        // 1. Build the order object locally
+        const localOrder = {
             _id: 'ORD-' + Date.now(),
-            createdAt: new Date().toISOString(),
-            status: 'processing',
-            paymentMethod: method,
+            userId: user?.uid || user?.id || 'guest',
+            userName: user?.displayName || user?.name || 'Guest',
+            userEmail: user?.email || 'guest@unknown.com',
+            items: cart.map(item => ({
+                productId: item.id || item._id,
+                name: item.name,
+                price: item.price,
+                qty: item.qty,
+                image: item.image,
+                category: item.category || 'Grocery'
+            })),
             totalAmount: subtotal,
             shippingAddress: address,
             city,
             zipcode,
-            items: cart.map(item => ({
-                name: item.name,
-                image: item.image,
-                price: item.price,
-                qty: item.qty
-            }))
+            paymentMethod: method,
+            status: 'pending',
+            createdAt: new Date().toISOString()
         };
-        localStorage.setItem('freshly_orders', JSON.stringify([newOrder, ...existing]));
-        /* Also save the latest address */
+
+        // 2. Save immediately to localStorage — this ALWAYS works
+        const existing = JSON.parse(localStorage.getItem('freshly_orders') || '[]');
+        localStorage.setItem('freshly_orders', JSON.stringify([localOrder, ...existing]));
         localStorage.setItem('freshly_address', JSON.stringify({ address, city, zipcode }));
+
+        // 3. Try to also save to backend silently (won't block or cause failure)
+        try {
+            const orderData = {
+                shippingAddress: address,
+                city,
+                zipcode,
+                paymentMethod: method,
+                items: localOrder.items
+            };
+            await createOrder(orderData);
+        } catch (err) {
+            // Backend is down or errored — that's OK, we already have the local save
+            console.warn('[Checkout] Backend save skipped (offline or error):', err.message);
+        }
+
+        // 4. Show success popup, clear cart, then go home ✅
+        setProcessing(false);
+        setPlacedOrder(localOrder);
+        setCart([]);
+        setTimeout(() => {
+            setPlacedOrder(null);
+            navigate('/home');
+        }, 3200);
     };
 
     const handlePayment = async (e) => {
@@ -376,26 +412,17 @@ const Checkout = ({ cart, setCart }) => {
         setError('');
 
         if (paymentMethod === 'upi') {
-            /* Show QR modal — no backend call needed */
             setShowQr(true);
             return;
         }
 
-        /* COD path — no backend required, accepts any location */
-        setProcessing(true);
-        saveOrderLocally('cod');
-        setTimeout(() => {
-            setCart([]);
-            setProcessing(false);
-            navigate('/home');
-        }, 1200);
+        /* COD path */
+        await saveOrderToBackend('cod');
     };
 
-    const handleUpiSuccess = () => {
-        saveOrderLocally('upi');
+    const handleUpiSuccess = async () => {
+        await saveOrderToBackend('upi');
         setShowQr(false);
-        setCart([]);
-        navigate('/home');
     };
 
     return (
@@ -407,6 +434,122 @@ const Checkout = ({ cart, setCart }) => {
                         onSuccess={handleUpiSuccess}
                         onClose={() => setShowQr(false)}
                     />
+                )}
+            </AnimatePresence>
+
+            {/* ── Order Placed Success Popup ── */}
+            <AnimatePresence>
+                {placedOrder && (
+                    <motion.div
+                        key="order-success"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        style={{
+                            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+                            backdropFilter: 'blur(6px)', zIndex: 9999,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center'
+                        }}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.7, opacity: 0, y: 40 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.8, opacity: 0 }}
+                            transition={{ type: 'spring', damping: 18, stiffness: 260 }}
+                            style={{
+                                background: 'white', borderRadius: '32px', padding: '48px 40px',
+                                width: '360px', textAlign: 'center',
+                                boxShadow: '0 40px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.05)'
+                            }}
+                        >
+                            {/* Animated green check */}
+                            <motion.div
+                                initial={{ scale: 0 }}
+                                animate={{ scale: [0, 1.25, 1] }}
+                                transition={{ delay: 0.2, duration: 0.5, ease: 'easeOut' }}
+                                style={{
+                                    width: '88px', height: '88px', borderRadius: '50%',
+                                    background: 'linear-gradient(135deg, #10b981, #059669)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    margin: '0 auto 20px',
+                                    boxShadow: '0 16px 32px rgba(16,185,129,0.4)'
+                                }}
+                            >
+                                <motion.svg
+                                    initial={{ pathLength: 0 }}
+                                    animate={{ pathLength: 1 }}
+                                    transition={{ delay: 0.4, duration: 0.5 }}
+                                    width="44" height="44" viewBox="0 0 44 44" fill="none"
+                                >
+                                    <motion.path
+                                        d="M8 22 L18 32 L36 14"
+                                        stroke="white" strokeWidth="4"
+                                        strokeLinecap="round" strokeLinejoin="round"
+                                        initial={{ pathLength: 0 }}
+                                        animate={{ pathLength: 1 }}
+                                        transition={{ delay: 0.45, duration: 0.5 }}
+                                    />
+                                </motion.svg>
+                            </motion.div>
+
+                            <motion.h2
+                                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.5 }}
+                                style={{ fontSize: '26px', fontWeight: '1000', color: 'var(--secondary)', margin: '0 0 8px', letterSpacing: '-1px' }}
+                            >
+                                Order Placed! 🎉
+                            </motion.h2>
+
+                            <motion.p
+                                initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                                transition={{ delay: 0.6 }}
+                                style={{ color: 'var(--text-muted)', fontSize: '14px', fontWeight: '600', margin: '0 0 24px', lineHeight: 1.6 }}
+                            >
+                                Your order has been confirmed and is being prepared.
+                            </motion.p>
+
+                            <motion.div
+                                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.65 }}
+                                style={{
+                                    background: 'var(--bg-main)', borderRadius: '16px',
+                                    padding: '16px 20px', marginBottom: '24px',
+                                    border: '1px solid var(--border-light)',
+                                    display: 'flex', flexDirection: 'column', gap: '10px'
+                                }}
+                            >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontWeight: '700' }}>Order ID</span>
+                                    <span style={{ color: 'var(--secondary)', fontWeight: '900' }}>#{placedOrder._id?.replace('ORD-', '').slice(-8)}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontWeight: '700' }}>Payment</span>
+                                    <span style={{ color: 'var(--secondary)', fontWeight: '900', textTransform: 'uppercase' }}>{placedOrder.paymentMethod}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontWeight: '700' }}>Total Paid</span>
+                                    <span style={{ color: 'var(--primary)', fontWeight: '1000', fontSize: '16px' }}>₹{placedOrder.totalAmount?.toFixed(0)}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontWeight: '700' }}>Delivering To</span>
+                                    <span style={{ color: 'var(--secondary)', fontWeight: '800' }}>{placedOrder.city}</span>
+                                </div>
+                            </motion.div>
+
+                            {/* Auto redirect countdown */}
+                            <motion.div
+                                initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: 'var(--text-muted)', fontSize: '12px', fontWeight: '700' }}
+                            >
+                                <motion.div
+                                    animate={{ rotate: 360 }}
+                                    transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                                    style={{ width: '14px', height: '14px', border: '2px solid var(--primary)', borderTopColor: 'transparent', borderRadius: '50%' }}
+                                />
+                                Redirecting to home...
+                            </motion.div>
+                        </motion.div>
+                    </motion.div>
                 )}
             </AnimatePresence>
 

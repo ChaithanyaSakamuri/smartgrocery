@@ -25,18 +25,18 @@ router.get('/sales-overview', protect, adminOnly, async (req, res) => {
         const daily = [];
         for (let d = new Date(lastWeek); d <= today; d.setDate(d.getDate() + 1)) {
             const start = new Date(d);
-            start.setHours(0,0,0,0);
+            start.setHours(0, 0, 0, 0);
             const end = new Date(d);
-            end.setHours(23,59,59,999);
+            end.setHours(23, 59, 59, 999);
             const dayOrders = orders.filter(o => o.createdAt >= start && o.createdAt <= end);
-            daily.push({ date: start.toISOString().slice(0,10), revenue: dayOrders.reduce((s,o)=>s+o.totalAmount,0) });
+            daily.push({ date: start.toISOString().slice(0, 10), revenue: dayOrders.reduce((s, o) => s + o.totalAmount, 0) });
         }
 
         // category-wise sales
         const cats = {};
-        orders.forEach(o=>{
-            o.items.forEach(i=>{
-                cats[i.category] = (cats[i.category]||0) + i.price*i.qty;
+        orders.forEach(o => {
+            o.items.forEach(i => {
+                cats[i.category] = (cats[i.category] || 0) + i.price * i.qty;
             });
         });
 
@@ -47,7 +47,7 @@ router.get('/sales-overview', protect, adminOnly, async (req, res) => {
                 { label: 'Active Vendors', value: totalVendors, icon: '🏪' },
                 { label: 'New Customers', value: totalCustomers, icon: '👤' }
             ],
-            recentOrders: orders.slice(-5).reverse(),
+            recentOrders: (await Order.find().sort({ createdAt: -1 }).limit(5).populate('userId', 'name email')),
             analytics: { daily, categorySales: cats }
         });
     } catch (error) {
@@ -55,10 +55,11 @@ router.get('/sales-overview', protect, adminOnly, async (req, res) => {
     }
 });
 
-// list all orders
 router.get('/orders', protect, adminOnly, async (req, res) => {
     try {
-        const orders = await Order.find().sort({ createdAt: -1 });
+        const orders = await Order.find()
+            .populate('userId', 'name email')
+            .sort({ createdAt: -1 });
         res.json(orders);
     } catch (err) {
         res.status(500).json({ error: err.message });

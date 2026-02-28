@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Heart, Plus, ShoppingCart } from 'lucide-react';
 
-const ProductCard = ({ product, addToCart, onWishlist }) => {
+const ProductCard = ({ product, addToCart, onWishlist, isWishlisted }) => {
     const navigate = useNavigate();
 
     return (
@@ -62,10 +62,10 @@ const ProductCard = ({ product, addToCart, onWishlist }) => {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        color: '#94a3b8'
+                        color: isWishlisted ? '#ef4444' : '#94a3b8'
                     }}
                 >
-                    <Heart size={18} />
+                    <Heart size={18} fill={isWishlisted ? '#ef4444' : 'transparent'} />
                 </motion.button>
             </div>
 

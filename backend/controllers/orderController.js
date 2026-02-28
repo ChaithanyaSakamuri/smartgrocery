@@ -6,30 +6,46 @@ export const createOrder = async (req, res) => {
   try {
     const { shippingAddress, city, zipcode, paymentMethod, items } = req.body;
 
-    let orderItems;
-    let totalAmount;
+    if (!req.user || !req.user.userId) {
+      console.error('[OrderController] Error: req.user or userId missing');
+      return res.status(401).json({ error: 'User authenticated but identity missing' });
+    }
+
+    console.log(`[OrderController] Creating order for user: ${req.user.userId}, method: ${paymentMethod}`);
+
+    let orderItems = [];
+    let totalAmount = 0;
 
     // If items provided in request (from COD checkout), use them
     if (items && items.length > 0) {
       orderItems = items;
       totalAmount = items.reduce((sum, item) => sum + (item.price * item.qty), 0);
+      console.log(`[OrderController] Using ${items.length} items from request body`);
+
+      // Still try to clear the DB cart for this user since they just checked out
+      try {
+        await Cart.findOneAndUpdate({ userId: req.user.userId }, { items: [] });
+      } catch (cartErr) {
+        console.warn('[OrderController] Failed to clear DB cart, but continuing order:', cartErr.message);
+      }
     } else {
       // Otherwise try to fetch from database cart
       const cart = await Cart.findOne({ userId: req.user.userId });
       if (!cart || cart.items.length === 0) {
+        console.warn(`[OrderController] Cart empty for user: ${req.user.userId}`);
         return res.status(400).json({ error: 'Cart is empty' });
       }
       orderItems = cart.items.map(item => ({
         productId: item.productId,
-        vendorId: item.vendorId,
+        vendorId: item.vendorId || 'local',
         name: item.name,
         price: item.price,
         qty: item.qty,
         image: item.image,
-        category: item.category
+        category: item.category || 'Grocery'
       }));
       totalAmount = cart.items.reduce((sum, item) => sum + (item.price * item.qty), 0);
-      
+
       // Clear cart after order
       await Cart.findOneAndUpdate({ userId: req.user.userId }, { items: [] });
     }
@@ -46,9 +62,11 @@ export const createOrder = async (req, res) => {
     });
 
     await order.save();
+    console.log(`[OrderController] Success: Order ${order._id} created`);
 
     res.status(201).json({ message: 'Order created', orderId: order._id, order });
   } catch (error) {
+    console.error('[OrderController] Exception:', error);
     res.status(500).json({ error: error.message });
   }
 };

@@ -13,6 +13,15 @@ import AdminInventoryTab from '../components/admin/AdminInventoryTab';
 import AdminCouponsTab from '../components/admin/AdminCouponsTab';
 import AdminSettingsTab from '../components/admin/AdminSettingsTab';
 import AdminAnalyticsTab from '../components/admin/AdminAnalyticsTab';
+import {
+    getAdminSalesOverview,
+    getAdminOrders,
+    updateAdminOrderStatus,
+    getAdminUsers,
+    approveVendor,
+    updateUserRole,
+    deleteUser
+} from '../services/api';
 
 /* ─────────── helpers ─────────── */
 const pill = (status) => {
@@ -50,35 +59,64 @@ const SidebarBtn = ({ id, label, icon, badge, active, onClick }) => (
 const AdminDashboard = () => {
     const [activeTab, setActiveTab] = useState('overview');
     const [orders, setOrders] = useState([]);
-    const [vendors, setVendors] = useState([]);
-    const [vendorProducts, setVendorProducts] = useState([]);
+    const [allUsers, setAllUsers] = useState([]);
+    const [metrics, setMetrics] = useState([]);
+    const [analytics, setAnalytics] = useState({ daily: [], categorySales: {} });
     const [adminProducts, setAdminProducts] = useState([]);
+    const [vendorProducts, setVendorProducts] = useState([]);
     const [coupons, setCoupons] = useState([]);
     const [orderSearch, setOrderSearch] = useState('');
     const [deliveryInputs, setDeliveryInputs] = useState({});
+    const [loading, setLoading] = useState(true);
     const { notifications, markAllRead, unreadCount } = useNotifications();
 
+    const fetchAdminData = async () => {
+        try {
+            setLoading(true);
+            const overview = await getAdminSalesOverview();
+            setMetrics(overview.metrics);
+            setAnalytics(overview.analytics);
+
+            const ordersData = await getAdminOrders();
+            setOrders(ordersData);
+
+            const usersData = await getAdminUsers();
+            setAllUsers(usersData);
+
+            // Local fallback for things not yet in backend
+            setAdminProducts(JSON.parse(localStorage.getItem('freshly_admin_products') || '[]'));
+            setVendorProducts(JSON.parse(localStorage.getItem('freshly_vendor_products') || '[]'));
+            setCoupons(JSON.parse(localStorage.getItem('freshly_coupons') || '[]'));
+
+            setLoading(false);
+        } catch (error) {
+            console.error("Failed to fetch admin data:", error);
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
-        setOrders(JSON.parse(localStorage.getItem('freshly_orders') || '[]'));
-        setVendors(JSON.parse(localStorage.getItem('freshly_vendors') || '[]'));
-        setVendorProducts(JSON.parse(localStorage.getItem('freshly_vendor_products') || '[]'));
-        setAdminProducts(JSON.parse(localStorage.getItem('freshly_admin_products') || '[]'));
-        setCoupons(JSON.parse(localStorage.getItem('freshly_coupons') || '[]'));
+        fetchAdminData();
     }, []);
 
     /* order helpers */
-    const changeOrderStatus = (id, status) => {
-        const updated = orders.map(o => o._id === id ? { ...o, status } : o);
-        setOrders(updated);
-        localStorage.setItem('freshly_orders', JSON.stringify(updated));
+    const changeOrderStatus = async (id, status) => {
+        try {
+            await updateAdminOrderStatus(id, status);
+            const updated = orders.map(o => o._id === id ? { ...o, status } : o);
+            setOrders(updated);
+            const overview = await getAdminSalesOverview();
+            setMetrics(overview.metrics);
+        } catch (error) {
+            alert("Failed to update status: " + error.message);
+        }
     };
 
-    const assignDelivery = (id) => {
+    const assignDelivery = async (id) => {
         const partner = deliveryInputs[id] || '';
         if (!partner.trim()) return alert('Enter delivery partner name.');
         const updated = orders.map(o => o._id === id ? { ...o, deliveryPartner: partner } : o);
         setOrders(updated);
-        localStorage.setItem('freshly_orders', JSON.stringify(updated));
         setDeliveryInputs(d => ({ ...d, [id]: '' }));
     };
 
@@ -90,9 +128,9 @@ const AdminDashboard = () => {
             <body>
             <h1>🧾 Invoice</h1>
             <p><b>Order ID:</b> #${order._id?.slice(-8).toUpperCase()}</p>
-            <p><b>Date:</b> ${new Date(order.date).toLocaleString()}</p>
+            <p><b>Date:</b> ${new Date(order.createdAt).toLocaleString()}</p>
             <p><b>Customer:</b> ${order.shippingAddress?.name || 'Guest'}</p>
-            <p><b>Address:</b> ${order.shippingAddress?.address || '—'}, ${order.shippingAddress?.city || ''}</p>
+            <p><b>Address:</b> ${order.shippingAddress || '—'}, ${order.city || ''}</p>
             <table>
                 <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
                 ${(order.items || []).map(i => `<tr><td>${i.name}</td><td>${i.qty}</td><td>₹${i.price}</td><td>₹${i.price * i.qty}</td></tr>`).join('')}
@@ -106,43 +144,57 @@ const AdminDashboard = () => {
         w.document.close();
     };
 
-    /* vendor helpers */
-    const handleVendorAction = (vendorId, action) => {
-        const updated = action === 'delete'
-            ? vendors.filter(v => v.id !== vendorId)
-            : vendors.map(v => v.id === vendorId ? { ...v, status: action } : v);
-        setVendors(updated);
-        localStorage.setItem('freshly_vendors', JSON.stringify(updated));
+    /* user/vendor helpers */
+    const handleVendorAction = async (userId, action) => {
+        try {
+            if (action === 'accepted') {
+                await approveVendor(userId);
+            } else if (action === 'delete') {
+                if (!window.confirm("Are you sure?")) return;
+                await deleteUser(userId);
+            } else if (action === 'rejected') {
+                await updateUserRole(userId, 'customer');
+            }
+            fetchAdminData();
+        } catch (error) {
+            alert("Action failed: " + error.message);
+        }
     };
 
     const handleProductApproval = (productId, action) => {
-        const updated = vendorProducts.map(p => p.id === productId ? { ...p, status: action } : p);
-        setVendorProducts(updated);
+        const vendorProductsLocal = JSON.parse(localStorage.getItem('freshly_vendor_products') || '[]');
+        const updated = vendorProductsLocal.map(p => p.id === productId ? { ...p, status: action } : p);
         localStorage.setItem('freshly_vendor_products', JSON.stringify(updated));
+        setVendorProducts(updated);
     };
 
     /* stats */
-    const totalSales = orders.filter(o => o.status !== 'cancelled').reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
+    const totalSalesStr = metrics.find(m => m.label === 'Total Sales')?.value || '₹0';
+    const totalOrdersCount = orders.length;
     const lowStockCount = adminProducts.filter(p => Number(p.stock) < 10).length;
 
     const tabs = [
         { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={17} /> },
         { id: 'products', label: 'Products', icon: <Package size={17} />, badge: 0 },
-        { id: 'orders', label: 'Orders', icon: <ShoppingBag size={17} />, badge: orders.filter(o => o.status === 'processing').length },
+        { id: 'orders', label: 'Orders', icon: <ShoppingBag size={17} />, badge: orders.filter(o => o.status === 'pending' || o.status === 'processing').length },
         { id: 'customers', label: 'Customers', icon: <Users size={17} /> },
         { id: 'inventory', label: 'Inventory', icon: <AlertTriangle size={17} />, badge: lowStockCount },
         { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={17} /> },
         { id: 'coupons', label: 'Coupons', icon: <Tag size={17} />, badge: coupons.filter(c => c.active).length },
-        { id: 'vendors', label: 'Vendors', icon: <TrendingUp size={17} />, badge: vendors.filter(v => v.status === 'pending').length },
-        { id: 'vproducts', label: 'V-Products', icon: <CheckCircle2 size={17} />, badge: vendorProducts.filter(p => p.status === 'pending').length },
+        { id: 'vendors', label: 'Vendors', icon: <TrendingUp size={17} />, badge: allUsers.filter(u => u.role === 'vendor' && !u.vendorApproved).length },
         { id: 'notifications', label: 'Alerts', icon: <Bell size={17} />, badge: unreadCount },
         { id: 'settings', label: 'Settings', icon: <Settings size={17} /> },
     ];
 
     const filteredOrders = orders.filter(o =>
         !orderSearch || o._id?.includes(orderSearch) ||
-        o.shippingAddress?.name?.toLowerCase().includes(orderSearch.toLowerCase())
+        o.shippingAddress?.name?.toLowerCase().includes(orderSearch.toLowerCase()) ||
+        o.userId?.email?.toLowerCase().includes(orderSearch.toLowerCase())
     );
+
+    if (loading && orders.length === 0) {
+        return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontWeight: '800' }}>Loading Admin Panel...</div>;
+    }
 
     return (
         <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-main)' }}>
@@ -173,11 +225,11 @@ const AdminDashboard = () => {
                         <h2 style={{ margin: '0 0 24px', fontWeight: '1000', fontSize: '24px', color: 'var(--secondary)' }}>Dashboard Overview</h2>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '14px', marginBottom: '24px' }}>
                             {[
-                                { label: 'Total Sales', value: `₹${totalSales.toLocaleString('en-IN')}`, color: 'var(--primary)' },
+                                { label: 'Total Sales', value: totalSalesStr, color: 'var(--primary)' },
                                 { label: 'Total Orders', value: orders.length, color: '#3b82f6' },
-                                { label: 'Vendors', value: vendors.filter(v => v.status === 'accepted').length, color: '#8b5cf6' },
+                                { label: 'Vendors', value: allUsers.filter(u => u.role === 'vendor' && u.vendorApproved).length, color: '#8b5cf6' },
                                 { label: 'Products', value: adminProducts.length, color: '#16a34a' },
-                                { label: 'Customers', value: new Set(orders.map(o => o.shippingAddress?.email || 'g')).size, color: '#f59e0b' },
+                                { label: 'Customers', value: allUsers.filter(u => u.role === 'customer').length, color: '#f59e0b' },
                                 { label: 'Low Stock', value: lowStockCount, color: '#ef4444' },
                             ].map((s, i) => (
                                 <motion.div key={i} whileHover={{ y: -4 }} style={{ background: 'white', padding: '18px', borderRadius: '18px', border: '1px solid var(--border-light)' }}>
@@ -191,23 +243,23 @@ const AdminDashboard = () => {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                             <div style={{ background: 'white', borderRadius: '20px', padding: '20px', border: '1px solid var(--border-light)' }}>
                                 <p style={{ margin: '0 0 12px', fontWeight: '900', fontSize: '14px', color: 'var(--secondary)' }}>⏳ Pending Orders</p>
-                                {orders.filter(o => o.status === 'processing').slice(0, 5).map(o => (
+                                {orders.filter(o => o.status === 'pending' || o.status === 'processing').slice(0, 5).map(o => (
                                     <div key={o._id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px', fontWeight: '700' }}>
-                                        <span style={{ color: 'var(--secondary)' }}>#{o._id?.slice(-6)}</span>
+                                        <span style={{ color: 'var(--secondary)' }}>#{o._id?.slice(-6).toUpperCase()}</span>
                                         <span style={{ color: 'var(--primary)' }}>₹{o.totalAmount}</span>
                                     </div>
                                 ))}
-                                {orders.filter(o => o.status === 'processing').length === 0 && <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No pending orders</p>}
+                                {orders.filter(o => o.status === 'pending' || o.status === 'processing').length === 0 && <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No pending orders</p>}
                             </div>
                             <div style={{ background: 'white', borderRadius: '20px', padding: '20px', border: '1px solid var(--border-light)' }}>
                                 <p style={{ margin: '0 0 12px', fontWeight: '900', fontSize: '14px', color: 'var(--secondary)' }}>🏪 Pending Vendors</p>
-                                {vendors.filter(v => v.status === 'pending').slice(0, 5).map(v => (
-                                    <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px', fontWeight: '700' }}>
+                                {allUsers.filter(u => u.role === 'vendor' && !u.vendorApproved).slice(0, 5).map(v => (
+                                    <div key={v._id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px', fontWeight: '700' }}>
                                         <span style={{ color: 'var(--secondary)' }}>{v.name}</span>
                                         <span style={{ color: '#854d0e' }}>Pending</span>
                                     </div>
                                 ))}
-                                {vendors.filter(v => v.status === 'pending').length === 0 && <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No pending vendors</p>}
+                                {allUsers.filter(u => u.role === 'vendor' && !u.vendorApproved).length === 0 && <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No pending vendors</p>}
                             </div>
                         </div>
                     </motion.div>
@@ -240,7 +292,13 @@ const AdminDashboard = () => {
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                                         <div>
                                             <p style={{ margin: 0, fontWeight: '900', fontSize: '14px' }}>Order #{order._id?.slice(-8).toUpperCase()}</p>
-                                            <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>{new Date(order.date).toLocaleString()} · {order.shippingAddress?.name}</p>
+                                            <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>
+                                                {new Date(order.createdAt).toLocaleString()} &nbsp;·&nbsp;
+                                                <b style={{ color: 'var(--secondary)' }}>{order.userName || order.userId?.name || order.shippingAddress?.name || 'Customer'}</b>
+                                                {(order.userEmail || order.userId?.email) && (
+                                                    <> &nbsp;·&nbsp; <a href={`mailto:${order.userEmail || order.userId?.email}`} style={{ color: 'var(--primary)', fontWeight: '800', textDecoration: 'none' }}>{order.userEmail || order.userId?.email}</a></>
+                                                )}
+                                            </p>
                                         </div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                             {pill(order.status)}
@@ -251,7 +309,7 @@ const AdminDashboard = () => {
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                                         <select value={order.status} onChange={e => changeOrderStatus(order._id, e.target.value)}
                                             style={{ padding: '6px 12px', borderRadius: '10px', border: '1px solid var(--border-light)', background: 'var(--bg-main)', fontSize: '12px', fontWeight: '700', outline: 'none', cursor: 'pointer' }}>
-                                            {['processing', 'confirmed', 'packed', 'out_for_delivery', 'delivered', 'cancelled'].map(s => (
+                                            {['pending', 'processing', 'confirmed', 'packed', 'out_for_delivery', 'delivered', 'cancelled'].map(s => (
                                                 <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
                                             ))}
                                         </select>
@@ -318,68 +376,36 @@ const AdminDashboard = () => {
                 {activeTab === 'vendors' && (
                     <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
                         <h2 style={{ margin: '0 0 20px', fontWeight: '1000', fontSize: '22px', color: 'var(--secondary)' }}>Vendor Management</h2>
-                        {vendors.length === 0 && <p style={{ color: 'var(--text-muted)', fontWeight: '700' }}>No vendor applications yet.</p>}
+                        {allUsers.filter(u => u.role === 'vendor').length === 0 && <p style={{ color: 'var(--text-muted)', fontWeight: '700' }}>No vendor applications yet.</p>}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {vendors.map(v => {
-                                const vendorSales = orders.filter(o => o.status === 'delivered' && (o.items || []).some(item => item.vendorId === v.id)).reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
+                            {allUsers.filter(u => u.role === 'vendor').map(v => {
+                                const vendorSales = orders.filter(o => o.status === 'delivered' && (o.items || []).some(item => item.vendorId === v._id)).reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
                                 const commission = Math.round(vendorSales * 0.1);
                                 return (
-                                    <div key={v.id} style={{ background: 'white', borderRadius: '16px', border: '1px solid var(--border-light)', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                    <div key={v._id} style={{ background: 'white', borderRadius: '16px', border: '1px solid var(--border-light)', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px' }}>
                                         <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900', fontSize: '16px', flexShrink: 0 }}>
                                             {v.name?.[0]?.toUpperCase()}
                                         </div>
                                         <div style={{ flex: 1 }}>
                                             <p style={{ margin: 0, fontWeight: '900', fontSize: '14px', color: 'var(--secondary)' }}>{v.name}</p>
-                                            <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>{v.email} · {v.storeName || v.businessName}</p>
+                                            <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>{v.email} · {v.businessName || 'Vendor'}</p>
                                             <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#16a34a', fontWeight: '700' }}>Sales: ₹{vendorSales.toLocaleString('en-IN')} · Commission: ₹{commission.toLocaleString('en-IN')}</p>
                                         </div>
                                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                            <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '900', background: v.status === 'accepted' ? '#f0fdf4' : v.status === 'rejected' ? '#fef2f2' : '#fef9c3', color: v.status === 'accepted' ? '#16a34a' : v.status === 'rejected' ? '#ef4444' : '#854d0e' }}>
-                                                {v.status?.toUpperCase()}
+                                            <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '900', background: v.vendorApproved ? '#f0fdf4' : '#fef9c3', color: v.vendorApproved ? '#16a34a' : '#854d0e' }}>
+                                                {v.vendorApproved ? 'APPROVED' : 'PENDING'}
                                             </span>
-                                            {v.status === 'pending' && (
+                                            {!v.vendorApproved && (
                                                 <>
-                                                    <button onClick={() => handleVendorAction(v.id, 'accepted')} style={{ padding: '6px 12px', borderRadius: '10px', border: 'none', background: '#f0fdf4', color: '#16a34a', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}>Accept</button>
-                                                    <button onClick={() => handleVendorAction(v.id, 'rejected')} style={{ padding: '6px 12px', borderRadius: '10px', border: 'none', background: '#fef2f2', color: '#ef4444', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}>Reject</button>
+                                                    <button onClick={() => handleVendorAction(v._id, 'accepted')} style={{ padding: '6px 12px', borderRadius: '10px', border: 'none', background: '#f0fdf4', color: '#16a34a', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}>Accept</button>
+                                                    <button onClick={() => handleVendorAction(v._id, 'rejected')} style={{ padding: '6px 12px', borderRadius: '10px', border: 'none', background: '#fef2f2', color: '#ef4444', fontWeight: '800', cursor: 'pointer', fontSize: '12px' }}>Reject</button>
                                                 </>
                                             )}
-                                            <button onClick={() => handleVendorAction(v.id, 'delete')} style={{ padding: '6px', borderRadius: '8px', border: '1px solid #fca5a5', background: '#fef2f2', color: '#ef4444', cursor: 'pointer', fontSize: '12px', display: 'flex' }}>✕</button>
+                                            <button onClick={() => handleVendorAction(v._id, 'delete')} style={{ padding: '6px', borderRadius: '8px', border: '1px solid #fca5a5', background: '#fef2f2', color: '#ef4444', cursor: 'pointer', fontSize: '12px', display: 'flex' }}>✕</button>
                                         </div>
                                     </div>
                                 );
                             })}
-                        </div>
-                    </motion.div>
-                )}
-
-                {/* ── VENDOR PRODUCTS ── */}
-                {activeTab === 'vproducts' && (
-                    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
-                        <h2 style={{ margin: '0 0 20px', fontWeight: '1000', fontSize: '22px', color: 'var(--secondary)' }}>Vendor Product Approvals</h2>
-                        {vendorProducts.length === 0 && <p style={{ color: 'var(--text-muted)', fontWeight: '700' }}>No vendor products submitted yet.</p>}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {vendorProducts.map(p => (
-                                <div key={p.id} style={{ background: 'white', borderRadius: '16px', border: '1px solid var(--border-light)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
-                                    <div style={{ width: '50px', height: '50px', borderRadius: '12px', background: 'var(--bg-main)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                        {p.image ? <img src={p.image} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '📦'}
-                                    </div>
-                                    <div style={{ flex: 1 }}>
-                                        <p style={{ margin: 0, fontWeight: '900', fontSize: '14px', color: 'var(--secondary)' }}>{p.name}</p>
-                                        <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-muted)', fontWeight: '600' }}>by {p.vendorName} · {p.category} · ₹{p.price} · Stock: {p.stock}</p>
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                        <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '900', background: p.status === 'approved' ? '#f0fdf4' : p.status === 'rejected' ? '#fef2f2' : '#fef9c3', color: p.status === 'approved' ? '#16a34a' : p.status === 'rejected' ? '#ef4444' : '#854d0e' }}>
-                                            {p.status?.toUpperCase()}
-                                        </span>
-                                        {p.status === 'pending' && (
-                                            <>
-                                                <button onClick={() => handleProductApproval(p.id, 'approved')} style={{ padding: '6px 12px', borderRadius: '10px', border: 'none', background: '#f0fdf4', color: '#16a34a', fontWeight: '800', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}><CheckCircle2 size={13} /> Approve</button>
-                                                <button onClick={() => handleProductApproval(p.id, 'rejected')} style={{ padding: '6px 12px', borderRadius: '10px', border: 'none', background: '#fef2f2', color: '#ef4444', fontWeight: '800', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}><XCircle size={13} /> Reject</button>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
                         </div>
                     </motion.div>
                 )}
@@ -394,8 +420,8 @@ const AdminDashboard = () => {
 
                         {/* system alerts */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-                            {vendors.filter(v => v.status === 'pending').map(v => (
-                                <div key={v.id} style={{ background: '#fef9c3', borderRadius: '14px', padding: '12px 16px', border: '1px solid #fde047', fontSize: '13px', fontWeight: '700', color: '#854d0e' }}>
+                            {allUsers.filter(u => u.role === 'vendor' && !u.vendorApproved).map(v => (
+                                <div key={v._id} style={{ background: '#fef9c3', borderRadius: '14px', padding: '12px 16px', border: '1px solid #fde047', fontSize: '13px', fontWeight: '700', color: '#854d0e' }}>
                                     🏪 New vendor application: <b>{v.name}</b> — <a href="#" onClick={() => setActiveTab('vendors')} style={{ color: 'var(--primary)', fontWeight: '900' }}>Review</a>
                                 </div>
                             ))}
@@ -404,29 +430,81 @@ const AdminDashboard = () => {
                                     ⚠ Low stock: <b>{p.name}</b> — only {p.stock} units left
                                 </div>
                             ))}
-                            {vendorProducts.filter(p => p.status === 'pending').map(p => (
-                                <div key={p.id} style={{ background: '#e0f2fe', borderRadius: '14px', padding: '12px 16px', border: '1px solid #bae6fd', fontSize: '13px', fontWeight: '700', color: '#0369a1' }}>
-                                    📦 Vendor product awaiting approval: <b>{p.name}</b> by {p.vendorName}
-                                </div>
-                            ))}
+                        </div>
+
+                        {/* ─── Recent Order Alerts ─── */}
+                        <div style={{ marginBottom: '20px' }}>
+                            <p style={{ margin: '0 0 10px', fontWeight: '900', fontSize: '14px', color: 'var(--secondary)' }}>📦 New Orders</p>
+                            {(() => {
+                                let savedProfile = null;
+                                try { savedProfile = JSON.parse(localStorage.getItem('freshly_user_profile') || 'null'); } catch (_) { }
+                                return orders.slice(0, 8).map((o, i) => {
+                                    let name = o.userName || o.userId?.name || '';
+                                    let email = o.userEmail || o.userId?.email || '';
+                                    if ((!name || name === 'Guest' || name === 'Customer') && savedProfile) name = savedProfile.name;
+                                    if (!email && savedProfile) email = savedProfile.email;
+                                    name = name || 'Customer';
+                                    return (
+                                        <div key={i} style={{ background: '#f0fdf4', borderRadius: '14px', padding: '12px 16px', border: '1px solid #bbf7d0', fontSize: '13px', color: 'var(--secondary)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                            <div>
+                                                <span style={{ fontWeight: '900' }}>#{(o._id || '').replace('ORD-', '').slice(-8)}</span>
+                                                <span style={{ fontWeight: '700', color: 'var(--text-muted)', margin: '0 6px' }}>·</span>
+                                                <span style={{ fontWeight: '800' }}>{name}</span>
+                                                {email
+                                                    ? <span style={{ marginLeft: '8px', fontSize: '12px', color: '#16a34a', fontWeight: '700' }}>{email}</span>
+                                                    : <span style={{ marginLeft: '8px', fontSize: '11px', color: '#ef4444', fontStyle: 'italic' }}>no email</span>
+                                                }
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                                                <span style={{ fontWeight: '900', color: 'var(--primary)' }}>₹{o.totalAmount}</span>
+                                                <span style={{ padding: '2px 8px', borderRadius: '20px', fontSize: '10px', fontWeight: '900', background: '#fef9c3', color: '#854d0e', textTransform: 'uppercase' }}>{o.paymentMethod}</span>
+                                                {email && (
+                                                    <a href={`mailto:${email}?subject=Your Freshly Order&body=Hi ${name},`}
+                                                        style={{ padding: '5px 12px', borderRadius: '8px', background: 'var(--primary)', color: 'white', fontWeight: '800', fontSize: '11px', textDecoration: 'none' }}>
+                                                        ✉️ Email
+                                                    </a>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                });
+                            })()}
+                            {orders.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: '13px', fontWeight: '600' }}>No orders yet.</p>}
                         </div>
 
                         {/* notification context items */}
                         {notifications.length > 0 && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                {notifications.map((n, i) => (
-                                    <div key={i} style={{ background: n.read ? 'white' : '#f0fdf4', borderRadius: '14px', padding: '12px 16px', border: `1px solid ${n.read ? 'var(--border-light)' : '#bbf7d0'}`, display: 'flex', gap: '10px' }}>
-                                        <span style={{ fontSize: '18px' }}>{n.icon || '🔔'}</span>
-                                        <div>
-                                            <p style={{ margin: 0, fontWeight: '800', fontSize: '13px', color: 'var(--secondary)' }}>{n.title}</p>
-                                            <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-muted)', fontWeight: '600' }}>{n.message}</p>
+                                {notifications.map((n, i) => {
+                                    const isContact = n.type === 'contact';
+                                    return (
+                                        <div key={i} style={{ background: n.read ? 'white' : (isContact ? '#eff6ff' : '#f0fdf4'), borderRadius: '14px', padding: '14px 16px', border: `1px solid ${n.read ? 'var(--border-light)' : (isContact ? '#bfdbfe' : '#bbf7d0')}`, display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                                            <span style={{ fontSize: '20px', flexShrink: 0 }}>{isContact ? '✉️' : (n.icon || '🔔')}</span>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                {/* Show Gmail as the title for contact messages */}
+                                                {isContact ? (
+                                                    <>
+                                                        <p style={{ margin: 0, fontWeight: '900', fontSize: '14px', color: '#1d4ed8' }}>{n.email || n.from || 'Unknown sender'}</p>
+                                                        <p style={{ margin: '1px 0 0', fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700' }}>{n.from && n.email ? `${n.from}` : ''} · {n.subject}</p>
+                                                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--secondary)', fontWeight: '600', lineHeight: 1.4 }}>{n.message}</p>
+                                                        {n.email && (
+                                                            <a href={`mailto:${n.email}?subject=Re: ${n.subject || 'Your Message'}&body=Hi ${n.from || ''},`}
+                                                                style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', marginTop: '8px', padding: '5px 12px', borderRadius: '8px', background: '#1d4ed8', color: 'white', fontWeight: '800', fontSize: '11px', textDecoration: 'none' }}>
+                                                                ↩️ Reply to {n.email}
+                                                            </a>
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <p style={{ margin: 0, fontWeight: '800', fontSize: '13px', color: 'var(--secondary)' }}>{n.title}</p>
+                                                        <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-muted)', fontWeight: '600' }}>{n.message}</p>
+                                                    </>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
-                        )}
-                        {notifications.length === 0 && vendors.filter(v => v.status === 'pending').length === 0 && adminProducts.filter(p => Number(p.stock) < 10).length === 0 && (
-                            <p style={{ color: 'var(--text-muted)', fontWeight: '700' }}>All caught up! No alerts right now.</p>
                         )}
                     </motion.div>
                 )}
@@ -443,3 +521,4 @@ const AdminDashboard = () => {
 };
 
 export default AdminDashboard;
+

@@ -2,17 +2,13 @@ import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema({
   userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    type: String, // Changed from ObjectId to String to support local/fallback IDs
     required: true,
   },
   items: [
     {
       productId: String,
-      vendorId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-      },
+      vendorId: String,
       name: String,
       price: Number,
       qty: Number,

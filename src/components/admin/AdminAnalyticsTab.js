@@ -36,7 +36,7 @@ const AdminAnalyticsTab = ({ orders, products }) => {
             const label = d.toLocaleString('default', { month: 'short' });
             const value = delivered
                 .filter(o => {
-                    const od = new Date(o.date);
+                    const od = new Date(o.createdAt || o.date);
                     return od.getMonth() === d.getMonth() && od.getFullYear() === d.getFullYear();
                 })
                 .reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
@@ -52,7 +52,7 @@ const AdminAnalyticsTab = ({ orders, products }) => {
             const label = d.toLocaleDateString('default', { weekday: 'short' });
             const ds = d.toDateString();
             const value = delivered
-                .filter(o => new Date(o.date).toDateString() === ds)
+                .filter(o => new Date(o.createdAt || o.date).toDateString() === ds)
                 .reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
             weeks.push({ label, value: Math.round(value) });
         }

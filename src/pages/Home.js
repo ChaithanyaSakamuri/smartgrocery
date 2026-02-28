@@ -42,9 +42,17 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
 
     const filterAndSort = (items) => {
         let filtered = items.filter(i => {
-            const matchesCategory = activeCategory === 'all' ||
-                i.id.startsWith(activeCategory.charAt(0)) ||
-                (i.category && i.category.toLowerCase().includes(activeCategory.toLowerCase()));
+            let matchesCategory = activeCategory === 'all';
+            if (!matchesCategory) {
+                if (activeCategory === 'vegetables') matchesCategory = i.id.startsWith('v');
+                else if (activeCategory === 'fruits') matchesCategory = i.id.startsWith('f');
+                else if (activeCategory === 'dairy') matchesCategory = i.id.startsWith('d') && !i.id.startsWith('df');
+                else if (activeCategory === 'dryFruits') matchesCategory = i.id.startsWith('df');
+                else if (activeCategory === 'grains') matchesCategory = i.id.startsWith('g');
+                else if (activeCategory === 'beverages') matchesCategory = i.id.startsWith('b');
+                else if (i.category) matchesCategory = i.category.toLowerCase().includes(activeCategory.toLowerCase());
+            }
+
             const matchesSearch = i.name.toLowerCase().includes(searchTerm.toLowerCase());
             const matchesOffer = !showOnlyOffers || (i.price < 50 || i.stock < 20); // Mock offer logic
             return matchesCategory && matchesSearch && matchesOffer;
@@ -227,7 +235,10 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
                         {/* Price Dropdown */}
                         <div style={{ position: 'relative' }}>
                             <div
-                                onClick={() => setOpenDropdown(openDropdown === 'price' ? null : 'price')}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenDropdown(openDropdown === 'price' ? null : 'price');
+                                }}
                                 style={{
                                     padding: '8px 16px',
                                     border: `1px solid ${sortBy === 'low' || sortBy === 'high' ? 'var(--primary)' : 'var(--border-light)'}`,
@@ -246,19 +257,21 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
                                 <ChevronDown size={14} style={{ transform: openDropdown === 'price' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
                             </div>
                             {openDropdown === 'price' && (
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '110%',
-                                    left: 0,
-                                    background: 'white',
-                                    border: '1px solid var(--border-light)',
-                                    borderRadius: '12px',
-                                    boxShadow: 'var(--shadow-lg)',
-                                    zIndex: 100,
-                                    minWidth: '160px',
-                                    overflow: 'hidden',
-                                    padding: '4px'
-                                }}>
+                                <div
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{
+                                        position: 'absolute',
+                                        top: '110%',
+                                        left: 0,
+                                        background: 'white',
+                                        border: '1px solid var(--border-light)',
+                                        borderRadius: '12px',
+                                        boxShadow: 'var(--shadow-lg)',
+                                        zIndex: 100,
+                                        minWidth: '160px',
+                                        overflow: 'hidden',
+                                        padding: '4px'
+                                    }}>
                                     {[
                                         { label: 'Default', value: 'default' },
                                         { label: 'Price: Low to High', value: 'low' },
@@ -290,7 +303,10 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
                         {/* Review Dropdown */}
                         <div style={{ position: 'relative' }}>
                             <div
-                                onClick={() => setOpenDropdown(openDropdown === 'review' ? null : 'review')}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenDropdown(openDropdown === 'review' ? null : 'review');
+                                }}
                                 style={{
                                     padding: '8px 16px',
                                     border: `1px solid ${sortBy === 'review' ? 'var(--primary)' : 'var(--border-light)'}`,
@@ -309,19 +325,21 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
                                 <ChevronDown size={14} style={{ transform: openDropdown === 'review' ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
                             </div>
                             {openDropdown === 'review' && (
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '110%',
-                                    left: 0,
-                                    background: 'white',
-                                    border: '1px solid var(--border-light)',
-                                    borderRadius: '12px',
-                                    boxShadow: 'var(--shadow-lg)',
-                                    zIndex: 100,
-                                    minWidth: '160px',
-                                    overflow: 'hidden',
-                                    padding: '4px'
-                                }}>
+                                <div
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{
+                                        position: 'absolute',
+                                        top: '110%',
+                                        left: 0,
+                                        background: 'white',
+                                        border: '1px solid var(--border-light)',
+                                        borderRadius: '12px',
+                                        boxShadow: 'var(--shadow-lg)',
+                                        zIndex: 100,
+                                        minWidth: '160px',
+                                        overflow: 'hidden',
+                                        padding: '4px'
+                                    }}>
                                     {[
                                         { label: 'Default', value: 'default' },
                                         { label: 'Top Rated', value: 'review' }
@@ -351,7 +369,8 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
 
                         {/* Offer Toggle (Single Button) */}
                         <div
-                            onClick={() => {
+                            onClick={(e) => {
+                                e.stopPropagation();
                                 setShowOnlyOffers(!showOnlyOffers);
                                 setOpenDropdown(null);
                             }}
@@ -369,8 +388,7 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
                                 color: showOnlyOffers ? 'var(--primary)' : 'inherit',
                                 transition: 'all 0.2s ease'
                             }}>
-                            Offer
-                            <ChevronDown size={14} style={{ opacity: 0.3 }} />
+                            Offer {showOnlyOffers ? '✓' : ''}
                         </div>
                     </div>
                 </div>
@@ -400,6 +418,7 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
                                                 product={item}
                                                 addToCart={addToCart}
                                                 onWishlist={onWishlist}
+                                                isWishlisted={wishlist.some(w => w.id === item.id)}
                                             />
                                         ))}
                                     </div>
@@ -414,6 +433,7 @@ const Home = ({ addToCart, wishlist, setWishlist }) => {
                                     product={item}
                                     addToCart={addToCart}
                                     onWishlist={onWishlist}
+                                    isWishlisted={wishlist.some(w => w.id === item.id)}
                                 />
                             ))}
                         </div>
